@@ -1,0 +1,219 @@
+# ============================================================
+#  AICraft —— AI 合成器 配置文件
+# ============================================================
+#  本插件默认走 OpenCode Zen 免费车道（免登录、免注册、免 API Key）。
+#  该车道的调用方式逆向自项目内的 dsh-our-free-model 插件：
+#
+#    POST {api.base-url}{api.path}
+#      Authorization: Bearer {api.key}     <- 免费车道固定为 public，不是你的密钥
+#      User-Agent:    opencode/1.18.31     <- 网关按 >= 1.17 的版本号做客户端指纹
+#      x-opencode-client / -session / -request / -project
+#      Accept: text/event-stream
+#
+#  请求体（OpenAI Chat Completions 形状，但 stream 必须为 true）：
+#    { "model": ..., "messages": [...], "stream": true, "max_tokens": ...,
+#      "tools": [bash, glob, grep, read], "tool_choice": "none" }
+#
+#  说明：免费车道有一个「工具指纹闸门」，请求体里必须声明 bash / glob / grep / read
+#  这四个小写工具名，否则网关会回 403 FreeTierError；并且只接受流式（SSE）响应，
+#  stream=false 同样会被指纹闸门拒绝。插件已按此规则实现，无需你手动处理。
+#
+#  如果你想换成任何一个 OpenAI 兼容的接口（OpenAI / DeepSeek / 本地 Ollama 等），
+#  把 api.path 改成 /v1/chat/completions、api.key 填你自己的密钥、
+#  并把 api.tool-fingerprint 设为 false 即可（此时插件会以 stream=true 读取 SSE）。
+# ============================================================
+
+api:
+  # 接口根地址（不要以 / 结尾）
+  base-url: "https://opencode.ai"
+  # 聊天补全路径
+  path: "/zen/v1/chat/completions"
+  # 鉴权 Key。免费车道固定为 public（这是公开的免密额度，不是你的私钥）。
+  key: "public"
+  # 使用的模型。
+  # 免费车道当前可用（2026-10 实测）的模型举例：
+  #   mimo-v2.6-flash-free        MiMo V2.6 Flash（默认，中文/JSON 稳定）
+  #   space-bunny-free            Space Bunny
+  #   muse-spark-1.3-contributor-free  Muse Spark 1.3（走 /zen/v1/responses，本插件暂不支持）
+  #   ling-3.1-flash-free / nemotron-3-ultra-free / jev-1.13-free
+  # 注意：模型可用性由上游随时调整，且与你的网络出口地区有关。
+  model: "mimo-v2.6-flash-free"
+  # 客户端指纹请求头，保持默认即可
+  user-agent: "opencode/1.18.31"
+  client: "desktop"
+  project: "global"
+  # 单次请求的总时长上限（秒）。这是「绝对兜底」：合成的正文短，90 秒足够。
+  # /aibuild 用的是 build.timeout-seconds（更宽），因为建造正文长得多。
+  timeout-seconds: 90
+  # 闲置超时（秒）：连续这么久没有收到任何新数据才判超时。
+  # 注意它和上面那条的区别：免费车道很慢（实测 ~1KB/s），模型可能连续几分钟
+  # 一直在正常吐字，只是吐得慢 —— 那种情况不该被杀掉，所以闲置红线才是主判据。
+  idle-timeout-seconds: 30
+  # 最多尝试次数（含首次）。全部失败则返还材料。
+  # 超时（TimeoutException）不会重试：同一份请求再发一遍只会再等一个超时周期。
+  max-attempts: 3
+  # 失败重试的基础退避时间（毫秒），第 n 次重试等待 n * 该值
+  retry-backoff-ms: 800
+  # 是否发送 bash/glob/grep/read 工具指纹（免费车道必须为 true）
+  tool-fingerprint: true
+  # 生成参数
+  max-tokens: 2048
+  temperature: 0.8
+  # 自定义系统提示词。留空（''）表示使用插件内置的 resources/prompt.txt，
+  # 那是推荐配置：里面明确告诉 AI「附魔名、等级、Lore、名称、属性数值都可以自由发挥，
+  # 不必遵循原版上限」，并附上原版附魔 / 属性清单供它按需选用。
+  # 填了内容就会整体覆盖提示词（支持 YAML 多行块 | ），改完用 /aicraft reload 生效。
+  system-prompt: ""
+
+gui:
+  # 界面标题（支持 & 颜色代码）。规格要求为「AI合成器」。
+  title: "AI合成器"
+
+craft:
+  # AI 自创附魔（对不上原版注册表的附魔名）的处理方式。
+  # 引擎无法创建真正的自定义附魔，所以插件把它们作为「自定义附魔」展示并存档，
+  # 而不是像以前那样静默丢弃。
+  custom-enchantments:
+    # 是否在物品 Lore 末尾追加自创附魔的展示行
+    show-in-lore: true
+    # 展示格式：{name} = 附魔名（纯 ASCII 下划线命名会美化成 Title Case），{level} = 等级
+    lore-format: "&7✦ &d{name} &8[&7{level}&8]"
+    # 是否把自创附魔写入物品持久化数据（键 aicraft:custom_enchantments，值为 "名字=等级" 列表），
+    # 方便其它插件 / 数据包读取
+    store-in-pdc: true
+
+# ============================================================
+#  /aibuild —— 让 AI 在你指向的位置建造建筑（默认仅 OP 可用，权限 aicraft.build）
+# ============================================================
+#  用法：
+#    /aibuild 帮我在这里建造一个黄鹤楼      <- 把这句话发给 AI，AI 返回一串建造指令
+#    /aibuild undo [次数]                  <- 还原最近若干次 AI 建造
+#    /aibuild cancel                       <- 停掉正在进行的施工
+#
+#  建造原点取你准星指向的方块表面（最多 build.max-distance 格）；
+#  没瞄到方块时取身前 4 格。AI 使用相对原点（~）的坐标写指令。
+#
+#  可用的建造指令（详见 resources/build-prompt.txt）：
+#    fill/setblock/hollow/walls/line/sphere/cylinder/replace/sign
+# ============================================================
+build:
+  # 是否启用 /aibuild
+  enabled: true
+  # 每位玩家的建造冷却（秒）。0 表示不冷却。
+  cooldown-seconds: 60
+  # 准星追踪建造原点的最大距离（格）
+  max-distance: 40
+  # 单次建造最多接受多少条指令
+  max-operations: 400
+  # 单条指令最多影响多少方块（例如一个超大 fill 会被跳过）
+  max-volume: 200000
+  # 单次建造的总方块上限（估算值），超出部分会被截断
+  max-blocks: 120000
+  # 每 tick 最多放置多少方块。数值越大建得越快，也越容易造成卡顿；
+  # 一次性放置 12 万方块约需 15 tick（不到 1 秒），默认值对多数服务器是安全的。
+  blocks-per-tick: 8192
+  # 放置方块时是否触发方块物理（重力方块下落、水流动等）。
+  # 默认 false：更快、也不会因为连锁更新把已有建筑冲坏。
+  apply-physics: false
+  # ===== 建造用哪个模型 =====
+  # 合成只要一小段 JSON，建造却要模型先把建筑「想」完再写指令，两者差别极大：
+  # 实测（2026-10-04，同一份建造提示词、同一台机器直连）：
+  #   mimo-v2.6-flash-free        max_tokens=8192 → 243 秒、8192 个 token 全是思维链，
+  #                                                正文 0 字符（换 16384 则被上游在 304 秒掐断）
+  #   ling-3.1-flash-free         同样是「只想不写」
+  #   deepseek-v4-flash-free      HTTP 400；jev-1.13-free HTTP 500（都不可用）
+  #   nemotron-3.5-lightning-free 50 秒就给出正文（思维链约 78%，速度是 mimo 的 ~5 倍），
+  #                                正文里会夹杂它的推演过程，本插件会按行降级解析出指令
+  # 所以建造默认用 nemotron-3.5-lightning-free；想让建造也走 api.model 就把它留空。
+  # 想彻底摆脱「模型爱思考」的问题，就换成商用 / 本地非推理模型（见 README §4）。
+  model: "nemotron-3.5-lightning-free"
+  # 建造请求的生成 token 上限。
+  # 注意：免费车道的模型是「推理模型」，思维链和正文共用这一个预算 —— 实测
+  # mimo 会把 8192 全部花在看不见的 reasoning 上，正文一个字都写不出来。
+  # 另外上游网关自己还有一条约 304 秒的硬上限，调太大只会更早撞到它。
+  max-tokens: 8192
+  # 单次建造请求的总时长上限（秒）。
+  # 默认 360：略高于上游约 304 秒的截断线，好让「上游截断」先发生、
+  # 我们据此给出准确原因（模型光想不写），而不是自己先超时。
+  timeout-seconds: 360
+  # ===== 把 AI 的思考链转达给玩家 =====
+  # 推理模型经常先吐几分钟思维链（SSE 的 delta.reasoning）才写正文。开启后，
+  # 建造期间会把思考链的最新片段按固定间隔发到玩家聊天框 —— 既是「AI 正在想什么」的
+  # 可视化，也是排查「设计跑偏」（例如给角斗场插一块写着黄鹤楼的告示牌）的唯一窗口。
+  # 预算 / 隐私敏感时可以关掉：关掉后玩家只会看到 messages.build-thinking。
+  stream-thinking: true
+  thinking:
+    # 两条思考消息之间的最小间隔（毫秒）。逐 token 转发会瞬间刷爆聊天框。
+    interval-ms: 1500
+    # 每条思考消息最多展示多少个字符（取最新的尾巴，避免长楼层刷屏）。
+    chunk-chars: 96
+  # 不允许被 AI 覆盖 / 破坏的方块
+  blacklist:
+    - BEDROCK
+    - BARRIER
+    - END_PORTAL_FRAME
+    - END_PORTAL
+    - NETHER_PORTAL
+    - COMMAND_BLOCK
+    - CHAIN_COMMAND_BLOCK
+    - REPEATING_COMMAND_BLOCK
+    - STRUCTURE_BLOCK
+    - JIGSAW
+    - LIGHT
+  undo:
+    # 每位玩家保留多少次可撤销的建造
+    history: 3
+    # 单次建造最多记录多少方块用于撤销（记录保存在内存里，重启后失效）。
+    # 超出上限时该次建造仍会完成，只是撤销可能不完整。
+    max-blocks: 80000
+  # 自定义建造系统提示词。留空（''）表示使用 resources/build-prompt.txt。
+  system-prompt: ""
+
+# 调试模式：会在控制台打印 AI 原始返回内容，排查问题时使用
+debug: false
+
+# ============================================================
+#  消息文本（全部支持 & 颜色代码）
+#  可用占位符：
+#    {item_name} 合成结果的物品名
+#    {reason}    AI 给出的失败原因
+#    {seconds}   冷却剩余秒数
+# ============================================================
+messages:
+  prefix: "&8[&bAICraft&8] &r"
+  crafting: "&eAI 正在思考合成结果..."
+  success: "&a合成成功：&f{item_name}"
+  failure: "&c合成失败：{reason}"
+  empty: "&c合成区域不能为空"
+  amount: "&c合成材料每格数量必须为 1，已返还材料"
+  no-response: "&cAI 无响应，已返还材料，请稍后重试"
+  inventory-full: "&e背包已满，多余的物品已掉落在你脚下"
+  returned: "&7合成区域内的物品已返还"
+  busy: "&e上一次合成还在进行中，请稍候"
+  reloaded: "&a配置已重载"
+  no-permission: "&c你没有权限使用该命令"
+  players-only: "&c该命令只能由玩家执行"
+
+  # ---- /aibuild ----
+  build-usage: "&e/aibuild <描述> &7让 AI 建造 &8| &e/aibuild undo [次数] &8| &e/aibuild cancel"
+  build-disabled: "&cAI 建造功能已在配置中关闭"
+  build-thinking: "&eAI 正在设计建筑，请稍候..."
+  build-thinking-stream: "&7💭 &8[&7思考中 {seconds}s&8] &7{text}"
+  build-thinking-done: "&7AI 思考完毕，正在整理建造指令..."
+  build-busy: "&e上一次建造还在进行中，请稍候"
+  build-cooldown: "&c建造冷却中，剩余 {seconds} 秒"
+  build-planned: "&aAI 设计了「&f{name}&a」：{ops} 条指令 / 约 {blocks} 个方块，开始施工"
+  build-skipped: "&7已跳过 {count} 条无法识别的建造指令"
+  build-truncated: "&e建筑规模超出上限（{limit} 方块），已按上限截断"
+  build-failed: "&c建造失败：{reason}"
+  build-unparsable-hint: "&7提示：把需求写得更具体一点；服务器控制台开 debug: true 可以看到 AI 的原始返回。"
+  build-timeout: "&cAI 在 {seconds} 秒内没设计完这个建筑。把描述改简单些，或调大 build.timeout-seconds / 调小 build.max-tokens"
+  build-no-content: "&cAI 光顾着想、没写出结果（免费车道的模型会把生成预算花在思考上）。把建筑描述改简单些再试"
+  build-done: "&a建筑「&f{name}&a」已完工：放置 {blocks} 个方块（跳过 {skipped}）"
+  build-out-of-range: "&7有 {count} 个方块超出世界高度，已跳过"
+  build-cancelled: "&7已取消当前建造，可用 /aibuild undo 还原已放置的部分"
+  build-nothing-to-cancel: "&7当前没有正在进行的建造"
+  build-undo-start: "&e正在还原 {blocks} 个方块..."
+  build-undo-done: "&a已撤销建造，还原 {blocks} 个方块"
+  build-undo-empty: "&c没有可撤销的建造记录"
+  build-undo-incomplete: "&e该次建造的撤销记录不完整，还原结果可能不完美"

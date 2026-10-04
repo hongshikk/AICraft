@@ -1,0 +1,31 @@
+name: AICraft
+version: '${version}'
+main: com.hongshikaikai.aicraft.AICraft
+api-version: '26.2'
+load: POSTWORLD
+authors: [hongshikaikai]
+description: AI 合成器 —— 把材料交给免费 AI 接口，合成出一件全新的物品；也可以用 /aibuild 让 AI 建造建筑。
+folia-supported: false
+
+commands:
+  aicraft:
+    description: 打开 AI 合成器界面
+    usage: "/aicraft [reload]"
+    aliases: [aic]
+    permission: aicraft.use
+    permission-message: "§c你没有权限使用该命令"
+  aibuild:
+    description: 让 AI 在你指向的位置建造建筑
+    usage: "/aibuild <描述> | /aibuild undo [次数] | /aibuild cancel | /aibuild reload"
+    aliases: [aib]
+
+permissions:
+  aicraft.use:
+    description: 允许使用 AI 合成器
+    default: true
+  aicraft.reload:
+    description: 允许重载 AICraft 配置
+    default: op
+  aicraft.build:
+    description: 允许使用 /aibuild 让 AI 建造建筑
+    default: op
